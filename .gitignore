@@ -1,0 +1,14 @@
+# Go build artifacts
+/bin/
+/build/
+/dist/
+*.exe
+*.test
+*.out
+
+# Tooling bins
+.bin/
+tools/bin/
+
+# Module/workspace noise
+**/.DS_Store

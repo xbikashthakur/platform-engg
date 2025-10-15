@@ -1,0 +1,17 @@
+version: "3.8"
+
+services:
+  localstack:
+    image: localstack/localstack:4.9.2
+    container_name: localstack_main
+    ports:
+      - "4566:4566"        # edge port (main)
+    environment:
+      - SERVICES=s3,ec2,dynamodb,iam,lambda
+      - DATA_DIR=/var/lib/localstack
+      - DEBUG=1
+    volumes:
+      - ./localstack-data:/var/lib/localstack
+      # Optional: enable docker socket only if you need container-based Lambda images:
+      # - /var/run/docker.sock:/var/run/docker.sock
+    restart: unless-stopped
