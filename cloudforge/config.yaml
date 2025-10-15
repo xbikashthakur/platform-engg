@@ -1,0 +1,6 @@
+project_name: cloudforge
+environment: dev
+region: us-east-1
+tags:
+  owner: platform-team
+  cost-center: engineering
