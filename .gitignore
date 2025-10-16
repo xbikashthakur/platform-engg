@@ -1,14 +1,43 @@
-# Go build artifacts
+# Binaries for Go and other languages
 /bin/
-/build/
-/dist/
 *.exe
+*.dll
+*.so
+*.dylib
+
+# Go build artifacts
 *.test
 *.out
+go.work
 
-# Tooling bins
-.bin/
-tools/bin/
+# Python caches and virtual environments
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+venv/
+.env
 
-# Module/workspace noise
-**/.DS_Store
+# Terraform state and configuration files
+.terraform/
+*.tfstate
+*.tfstate.*
+.terraform.lock.hcl
+terraform.tfvars
+crash.log
+
+# IDE and OS-specific files
+.vscode/*
+!.vscode/settings.json
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# Credentials and sensitive files
+*.pem
+*.key
+credentials.json
+awscliv2.zip
+aws/
