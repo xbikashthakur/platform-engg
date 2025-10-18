@@ -1,0 +1,134 @@
+# .pre-commit-config.yaml
+# A comprehensive pre-commit configuration for Python, Go, Terraform, and AWS projects.
+
+# Optional: Set a minimum required pre-commit version
+# min_pre_commit_version: 4.3.0
+
+# Optional: Define default stages if you want to run hooks on push as well
+# default_stages: [commit, push]
+
+repos:
+  # ===================================================================
+  # 1. General Purpose Hooks (File formatting, syntax)
+  # ===================================================================
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+        # Exclude Helm chart templates which can have valid templating errors
+        exclude: .*/templates/.*\.yaml
+      - id: check-json
+      - id: check-added-large-files
+        args: ['--maxkb=1024'] # 1 MB
+      - id: check-merge-conflict
+      - id: check-case-conflict
+
+  # ===================================================================
+  # 2. Security Hooks (Secrets, Vulnerabilities)
+  # ===================================================================
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.28.0
+    hooks:
+      - id: gitleaks
+        name: Detect hardcoded secrets (gitleaks)
+
+  # ===================================================================
+  # 3. Python Hooks (Formatting, Linting, Type Checking)
+  # ===================================================================
+  - repo: https://github.com/psf/black
+    rev: 25.9.0
+    hooks:
+      - id: black
+        name: Format Python code (black)
+        language_version: python3.11
+
+  - repo: https://github.com/pycqa/isort
+    rev: 7.0.0
+    hooks:
+      - id: isort
+        name: Sort Python imports (isort)
+        args: ["--profile", "black"]
+
+  - repo: https://github.com/pycqa/flake8
+    rev: 7.3.0
+    hooks:
+      - id: flake8
+        name: Lint Python code (flake8)
+        # Add additional dependencies like plugins here if needed
+        # additional_dependencies: [flake8-bugbear]
+
+  - repo: https://github.com/pre-commit/mirrors-mypy
+    rev: v1.18.2
+    hooks:
+      - id: mypy
+        name: Check Python type hints (mypy)
+        args: [--strict]
+        # Mypy can be slow, so you might want to run it manually or in CI
+        # stages: [manual, push]
+        additional_dependencies:
+          - types-PyYAML
+          - boto3-stubs[s3,iam]
+
+  # ===================================================================
+  # 4. Golang Hooks (Linting, Formatting)
+  # ===================================================================
+  - repo: https://github.com/golangci/golangci-lint
+    rev: v2.5.0
+    hooks:
+      - id: golangci-lint
+        name: Lint Go code (golangci-lint)
+        args: ['run', '--fix']
+        pass_filenames: false
+        files: ^cloudforge/
+        entry: bash -c 'cd cloudforge && golangci-lint run --fix'
+
+  # ===================================================================
+  # 5. Terraform Hooks (Format, Lint, Validate, Secure)
+  # ===================================================================
+  - repo: https://github.com/antonbabenko/pre-commit-terraform
+    rev: v1.102.0
+    hooks:
+      - id: terraform_fmt
+        files: ^(cloudforge/terraform|terraform)/.*\.tf$
+        always_run: true
+        pass_filenames: false
+      - id: terraform_validate
+        files: ^(cloudforge/terraform|terraform)/.*\.tf$
+        always_run: true
+        pass_filenames: false
+      - id: terraform_tflint
+        files: ^(cloudforge/terraform|terraform)/.*\.tf$
+        always_run: true
+        pass_filenames: false
+      - id: terraform_docs
+        files: ^(cloudforge/terraform|terraform)/.*\.tf$
+        always_run: true
+        pass_filenames: false
+        args: ["--args=--recursive", "--args=--lockfile=false"]
+
+  - repo: https://github.com/bridgecrewio/checkov
+    rev: 3.2.484
+    hooks:
+      - id: checkov
+        name: Scan Terraform for security misconfigurations (checkov)
+        language_version: python3.12
+        args: [--framework, terraform, --quiet]
+        # Pass environment variables needed for checkov if any
+        # pass_filenames: false
+
+  # ===================================================================
+  # 6. Shell & Docker Hooks (For scripts and Dockerfiles)
+  # ===================================================================
+  - repo: https://github.com/shellcheck-py/shellcheck-py
+    rev: v0.11.0.1
+    hooks:
+      - id: shellcheck
+        name: Lint shell scripts (shellcheck)
+
+  - repo: https://github.com/hadolint/hadolint
+    rev: v2.14.0
+    hooks:
+      - id: hadolint
+        name: Lint Dockerfiles (hadolint)

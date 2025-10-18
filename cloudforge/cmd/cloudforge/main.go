@@ -1,20 +1,14 @@
+// platform-engg/cloudforge/cmd/cloudforge/main.go
 package main
 
 import (
 	"fmt"
 	"log"
 	"os"
-	"gopkg.in/yaml.v3"
 
+	// Full module path required for the internal package
+	"github.com/xbikashthakur/platform-engg/cloudforge/internal/config"
 )
-
-type Config struct {
-	ProjectName	string				`yaml:"project_name"`
-	Environment	string				`yaml:"environment"`
-	Region		string				`yaml:"region"`
-	Tags		map[string]string	`yaml:"tags"`
-
-}
 
 func main() {
 	logger := log.New(os.Stdout, "[Cloudforge] ", log.LstdFlags)
@@ -26,21 +20,16 @@ func main() {
 	configPath := os.Args[1]
 	logger.Printf("Loading config from: %s", configPath)
 
-	data, err := os.ReadFile(configPath)
+	cfg, err := config.Load(configPath)
 	if err != nil {
-		logger.Fatalf("Error reading config: %v", err)
-	}
-
-	var config Config
-	if err := yaml.Unmarshal(data, &config); err != nil {
-		logger.Fatalf("Error parsing config: %v", err)
+		logger.Fatalf("Failed to load configuration: %v", err)
 	}
 
 	logger.Printf("Project: %s, Environment: %s, Region: %s",
-        config.ProjectName, config.Environment, config.Region)
+		cfg.ProjectName, cfg.Environment, cfg.Region)
 
 	fmt.Printf("\n✓ Configuration loaded successfully\n")
-    fmt.Printf("  Project: %s\n", config.ProjectName)
-    fmt.Printf("  Environment: %s\n", config.Environment)
-    fmt.Printf("  Region: %s\n", config.Region)
+	fmt.Printf("  Project: %s\n", cfg.ProjectName)
+	fmt.Printf("  Environment: %s\n", cfg.Environment)
+	fmt.Printf("  Region: %s\n", cfg.Region)
 }
