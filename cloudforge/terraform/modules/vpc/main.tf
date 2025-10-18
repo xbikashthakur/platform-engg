@@ -109,7 +109,7 @@ resource "aws_kms_key" "flow_logs_key" {
 # 1. Create a CloudWatch Log Group to store flow logs
 # Create a CloudWatch Log Group to store flow logs
 resource "aws_cloudwatch_log_group" "flow_logs" {
-  name = "/aws/vpc-flow-logs/${var.project_name}-${var.environment}"
+  name              = "/aws/vpc-flow-logs/${var.project_name}-${var.environment}"
   retention_in_days = 365
   kms_key_id        = aws_kms_key.flow_logs_key.arn
 
@@ -176,8 +176,8 @@ resource "aws_subnet" "public" {
   # This function calculates a valid /24 subnet from the VPC's /16 range.
   # cidrsubnet(prefix, newbits, netnum)
   # It takes our VPC CIDR, adds 8 bits to the netmask (16+8=24), and creates the first subnet (netnum=0).
-  cidr_block              = cidrsubnet(var.vpc_cidr, 8, 0)
-  availability_zone       = "us-east-1a"
+  cidr_block        = cidrsubnet(var.vpc_cidr, 8, 0)
+  availability_zone = "us-east-1a"
   # Set to false to avoid automatically assigning public IPs to instances.
   # This is a security best practice.
   map_public_ip_on_launch = false

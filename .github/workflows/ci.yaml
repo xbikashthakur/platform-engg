@@ -1,0 +1,120 @@
+# The name of our CI pipeline, which will be displayed on GitHub
+name: CloudForge CI
+
+# --- Triggers ---
+# This section defines WHEN the workflow will run.
+on:
+  # Run on pushes to the main branch
+  push:
+    branches: [ main ]
+  # Run on any pull request that targets the main branch
+  pull_request:
+    branches: [ main ]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+# --- Jobs ---
+# A workflow is made up of one or more jobs that run in parallel by default.
+jobs:
+  # --- Job 1: Linting and Unit Testing ---
+  lint-and-test:
+    name: Lint & Test
+    # The type of virtual machine to run the job on. 'ubuntu-latest' is a great default.
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    strategy:
+      matrix:
+        project: [cloudforge]
+    steps:
+      # Step 1: Check out the repository code so the job can access it.
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      # Step 2: Set up the Go environment.
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.25.2'
+
+      # Step 3: Set up the Python environment.
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.14.0'
+
+      - name: Cache Go Modules
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/go-build
+          key: ${{ runner.os }}-go-${{ hashFiles('./${{ matrix.project }}/go.sum') }}
+          restore-keys: ${{ runner.os }}-go-
+
+      - name: Cache Python Dependencies
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('${{ github.workspace }}/requirements.txt') }}
+          restore-keys: ${{ runner.os }}-pip-
+
+      # Step 4: Install dependencies for both languages.
+      - name: Install Dependencies
+        run: |
+          go mod download
+          pip install -r ${{ github.workspace }}/requirements.txt
+        working-directory: ./${{ matrix.project }}
+
+      # Step 5: Run the Go linter to check for code style issues and bugs.
+      - name: Run Go Linter
+        uses: golangci/golangci-lint-action@v8
+        with:
+          version: v2.5.0
+          working-directory: ./${{ matrix.project }}
+
+      # Step 6: Run Go unit tests.
+      - name: Run Go Tests
+        run: go test -v ./...
+        working-directory: ./${{ matrix.project }}
+
+      # Step 7: Run Python unit tests.
+      - name: Run Python Tests
+        run: pytest tests/python/ -v
+        working-directory: ./${{ matrix.project }}
+
+  # --- Job 2: Terraform Validation ---
+  terraform-validate:
+    name: Terraform Validate
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      # Step 1: Set up the Terraform CLI in the runner.
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.13.4
+
+      - name: Cache Terraform Providers
+        uses: actions/cache@v4
+        with:
+          path: ./cloudforge/terraform/environments/dev/.terraform
+          key: ${{ runner.os }}-terraform-${{ hashFiles('./cloudforge/terraform/environments/dev/**/*.tf') }}
+          restore-keys: ${{ runner.os }}-terraform-
+
+      # Step 2: Check that all Terraform files are correctly formatted.
+      - name: Terraform Format Check
+        run: terraform fmt -check -recursive ./cloudforge
+
+      # Step 3: Initialize Terraform to download providers.
+      # -backend=false is crucial for CI as we don't need to connect to a state backend.
+      - name: Terraform Init
+        run: terraform -chdir=./cloudforge/terraform/environments/dev init -backend=false
+
+      # Step 4: Validate the Terraform configuration for syntax and logical errors.
+      - name: Terraform Validate
+        run: terraform -chdir=./cloudforge/terraform/environments/dev validate

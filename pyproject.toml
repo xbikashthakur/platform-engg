@@ -1,0 +1,7 @@
+[tool.mypy]
+
+# This section tells mypy how to handle specific modules
+[[tool.mypy.overrides]]
+# The wildcard covers moto, moto.core, etc.
+module = "moto.*"
+ignore_missing_imports = true
