@@ -64,9 +64,7 @@ repos:
     hooks:
       - id: mypy
         name: Check Python type hints (mypy)
-        args: [--strict]
-        # Mypy can be slow, so you might want to run it manually or in CI
-        # stages: [manual, push]
+        args: [--strict, --allow-untyped-decorators]
         additional_dependencies:
           - types-PyYAML
           - boto3-stubs[s3,iam]
