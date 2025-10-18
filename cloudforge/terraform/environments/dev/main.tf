@@ -15,12 +15,12 @@ provider "aws" {
 
   # Redirecting AWS API calls to localhost.
   endpoints {
-    s3      = "http://localhost:4566"
-    ec2     = "http://localhost:4566"
-    iam     = "http://localhost:4566"
-    sts     = "http://localhost:4566"
-    kms     = "http://localhost:4566"
-    logs    = "http://localhost:4566"
+    s3   = "http://localhost:4566"
+    ec2  = "http://localhost:4566"
+    iam  = "http://localhost:4566"
+    sts  = "http://localhost:4566"
+    kms  = "http://localhost:4566"
+    logs = "http://localhost:4566"
     # Add endpoints for other services used in the module
   }
 }
