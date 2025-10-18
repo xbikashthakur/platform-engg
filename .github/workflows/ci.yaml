@@ -51,6 +51,13 @@ jobs:
         with:
           terraform_version: 1.13.3
 
+      # Step 5: Set up LocalStack to mock AWS
+      - name: Setup LocalStack
+        uses: LocalStack/setup-localstack@v0.2.4
+        with:
+          image-tag: '4.9.2'
+          install-awslocal: true
+
       - name: Cache Go Modules
         uses: actions/cache@v4
         with:
@@ -65,26 +72,26 @@ jobs:
           key: ${{ runner.os }}-pip-${{ hashFiles('${{ github.workspace }}/requirements.txt') }}
           restore-keys: ${{ runner.os }}-pip-
 
-      # Step 5: Install dependencies for both languages.
+      # Step 6: Install dependencies for both languages.
       - name: Install Dependencies
         run: |
           go mod download
           pip install -r ${{ github.workspace }}/requirements.txt
         working-directory: ./${{ matrix.project }}
 
-      # Step 6: Run the Go linter to check for code style issues and bugs.
+      # Step 7: Run the Go linter to check for code style issues and bugs.
       - name: Run Go Linter
         uses: golangci/golangci-lint-action@v8
         with:
           version: v2.5.0
           working-directory: ./${{ matrix.project }}
 
-      # Step 7: Run Go unit tests.
+      # Step 8: Run Go unit tests.
       - name: Run Go Tests
         run: go test -v ./...
         working-directory: ./${{ matrix.project }}
 
-      # Step 8: Run Python unit tests.
+      # Step 9: Run Python unit tests.
       - name: Run Python Tests
         run: pytest tests/python/ -v
         working-directory: ./${{ matrix.project }}
