@@ -45,7 +45,7 @@ pytest tests/python/
 echo "✓ All unit tests passed."
 
 # 7. Run Terratest (Optional, as it's slow)
-read -p $'\n[7/7] Run slow Terratest integration test? (y/N): ' choice
+read -r -p $'\n[7/7] Run slow Terratest integration test? (y/N): ' choice
 case "$choice" in
   y|Y )
     echo "Running Terratest... (this may take a few minutes)"

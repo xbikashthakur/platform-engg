@@ -15,16 +15,10 @@ func TestVpcModuleIntegration(t *testing.T) {
 	// We are testing our 'dev' ENVIRONMENT, not the module directly,
 	// because the environment has the LocalStack provider configured.
 	terraformOptions := &terraform.Options{
-		// The path to where our Terraform code is located
-		TerraformDir: "../../terraform/environments/dev",
-
-		// We don't need to pass variables since our 'dev' environment has them defined.
-		// But if we were testing the module directly, we would do it here:
-		// Vars: map[string]interface{}{
-		//  "project_name": "terratest",
-		//  "environment":  "test",
-		// },
-	}
+        TerraformDir:     "../../terraform/environments/dev",  // Path to your Terraform configuration
+        TerraformBinary:  "terraform",                         // Default is 'tofu' from OpenTofu, explicitly set to use Terraform CLI
+        // Additional fields as needed, e.g., Vars for variables
+    }
 
 	// --- Test Lifecycle ---
 	// At the end of the test, run 'terraform destroy' to clean up any resources.
