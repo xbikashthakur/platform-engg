@@ -13,9 +13,15 @@ provider "aws" {
   skip_metadata_api_check     = true
   skip_requesting_account_id  = true
 
-  # This is the magic: redirecting AWS API calls to localhost.
+  # Redirecting AWS API calls to localhost.
   endpoints {
-    ec2 = "http://localhost:4566"
+    s3   = "http://localhost:4566"
+    ec2  = "http://localhost:4566"
+    iam  = "http://localhost:4566"
+    sts  = "http://localhost:4566"
+    kms  = "http://localhost:4566"
+    logs = "http://localhost:4566"
+    # Add endpoints for other services used in the module
   }
 }
 

@@ -111,7 +111,6 @@ repos:
     hooks:
       - id: checkov
         name: Scan Terraform for security misconfigurations (checkov)
-        language_version: python3.12
         args: [--framework, terraform, --quiet]
         # Pass environment variables needed for checkov if any
         # pass_filenames: false
