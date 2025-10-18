@@ -19,7 +19,9 @@ provider "aws" {
     ec2     = "http://localhost:4566"
     iam     = "http://localhost:4566"
     sts     = "http://localhost:4566"
-    # Add endpoints for other services used in your module, e.g., s3 = "http://localhost:4566"
+    kms     = "http://localhost:4566"
+    logs    = "http://localhost:4566"
+    # Add endpoints for other services used in the module
   }
 }
 
