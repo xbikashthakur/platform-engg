@@ -1,4 +1,4 @@
-module github.com/xbikashthakur/cloudforge
+module github.com/xbikashthakur/platform-engg/cloudforge
 
 go 1.25.2
 

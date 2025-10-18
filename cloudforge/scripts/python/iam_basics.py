@@ -1,57 +1,89 @@
-import boto3
 import json
+from typing import Any, Mapping
 
+import boto3
+from botocore.exceptions import ClientError
 
 # --- Configuration ---
 # In a real app, this would come from a config file
-ENDPOINT_URL = 'http://localhost:4566'
-REGION_NAME = 'us-east-1'
-POLICY_NAME = 'CloudForgeS3AccessPolicyV2'
-USER_NAME = 'cloudforge-user-5'
+ENDPOINT_URL = "http://localhost:4566"
+REGION_NAME = "us-east-1"
+POLICY_NAME = "CloudForgeS3AccessPolicyV4"
+USER_NAME = "cloudforge-user-7"
 
-
-# --- Boto3 Client ---
-iam_client = boto3.client(
-    'iam',
-    endpoint_url=ENDPOINT_URL,
-    region_name=REGION_NAME,
-    aws_access_key_id='test', # LocalStack credentials
-    aws_secret_access_key='test' # LocalStack credentials
-)
-
-def create_user(username):
-    """Creates an IAM user if they don't already exist."""
-    try:
-        iam_client.create_user(UserName=username)
-        print(f"User '{username}' created successfuly.")
-    except iam_client.exceptions.EntityAlreadyExistException:
-        print(f"i User '{username}' already exists. Skipping user creation.")
-
-def create_policy(policy_name):
-    """Creates a policy to allow read/write access to specific S3 buckets."""
-    # Policy document defines the permissions in JSON format
-    policy_document = {
-        "Version": "2012-10-17",
-        "Statement": [{
+# Policy document defines the permissions in JSON format
+policy_document = {
+    "Version": "2012-10-17",
+    "Statement": [
+        {
             "Effect": "Allow",
             "Action": ["s3:GetObject", "s3:PutObject", "s3:DeleteObject"],
-            "Resource": "arn:aws:s3:::cloudforge-*/*"
-        }]
-    }
+            "Resource": "arn:aws:s3:::cloudforge-*/*",
+        }
+    ],
+}
+
+# --- Boto3 Client ---
+iam_client: Any = boto3.client(
+    "iam",
+    endpoint_url=ENDPOINT_URL,
+    region_name=REGION_NAME,
+    aws_access_key_id="test",  # LocalStack credentials
+    aws_secret_access_key="test",  # LocalStack credentials
+)
+
+
+def create_user(iam_client: Any, username: str) -> str:
+    """
+    Create an IAM user if missing. Return the user's ARN.
+    Idempotent: returns existing ARN when the user exists.
+    """
     try:
-        iam_client.create_policy(
-            PolicyName=policy_name,
-            PolicyDocument=json.dumps(policy_document)
-        )
-        print(f"Policy '{policy_name}' created successfuly.")
-    except iam_client.exceptions.EntityAlreadyExistException:
-        print(f"i Policy '{policy_document}' already exists. Skipping policy creation.")
+        resp: Mapping[str, Any] = iam_client.create_user(UserName=username)
+        print(f"✓ User '{username}' created successfully.")
+        return str(resp["User"]["Arn"])
+    except ClientError as exc:
+        code = exc.response.get("Error", {}).get("Code")
+        if code in ("EntityAlreadyExists", "EntityAlreadyExistsException"):
+            resp = iam_client.get_user(UserName=username)
+            print(f"i User '{username}' already exists.")
+            return str(resp["User"]["Arn"])
+
+        print(f"i Error while creating user: '{username}'")
+        raise
 
 
+def create_policy(
+    iam_client: Any, policy_name: str, policy_document: dict[str, Any]
+) -> str:
+    """
+    Create a managed policy or return existing ARN.
+    """
+    policy_arn: str = f"arn:aws:iam::000000000000:policy/{policy_name}"
+    try:
+        iam_client.get_policy(PolicyArn=policy_arn)
+        print(f"i Policy '{policy_name}' already exists.")
+        return policy_arn
+    except ClientError as exc:
+        code = exc.response.get("Error", {}).get("Code")
+        if code in ("NoSuchEntity", "NoSuchEntityException"):
+            policy_doc_json = json.dumps(policy_document)
+            resp = iam_client.create_policy(
+                PolicyName=policy_name, PolicyDocument=policy_doc_json
+            )
+            print(f"✓ Policy '{policy_name}' created successfully.")
+            return str(resp["Policy"]["Arn"])
 
-if __name__=='__main__':
-    print("--- Setting up IAM Resources in LocalStack ---")
-    create_user(USER_NAME)
-    create_policy(POLICY_NAME)
+        print(f"i Error while creating policy: '{policy_name}'")
+        raise
+
+
+if __name__ == "__main__":
+    print("--- IAM Resources setup in LocalStack ---")
+    create_user(iam_client=iam_client, username=USER_NAME)
+    create_policy(
+        iam_client=iam_client,
+        policy_name=POLICY_NAME,
+        policy_document=policy_document,
+    )
     print("\n IAM setup completed.")
-
