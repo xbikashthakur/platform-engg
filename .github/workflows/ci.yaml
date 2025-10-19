@@ -212,7 +212,6 @@ jobs:
     name: Integration Tests (LocalStack)
     runs-on: ubuntu-latest
     needs: [pre-flight-check, pr-validate-and-lint, unit-tests]
-    # Note: Only run if Go files have changed (since tests are in Go only).
     if: needs.pre-flight-check.outputs.go == 'true'
     strategy:
       fail-fast: false
@@ -220,6 +219,11 @@ jobs:
         project: [cloudforge]
     env:
       TERRAFORM_DIR: "${{ matrix.project }}/terraform/environments/dev"
+
+    defaults:
+      run:
+        working-directory: ./${{ matrix.project }}
+
     services:
       localstack:
         image: localstack/localstack:${{ vars.LOCALSTACK_VERSION }}
@@ -244,64 +248,50 @@ jobs:
         with:
           go-version-file: '${{ matrix.project }}/go.mod'
           cache: true
-          cache-dependency-path: ${{ matrix.project }}/go.sum
+          cache-dependency-path: '${{ matrix.project }}/go.sum'
 
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version-file: '.python-version'
+          python-version-file: '${{ github.workspace }}/.python-version'
           cache: 'pip'
-          cache-dependency-path: requirements.txt
+          cache-dependency-path: '${{ github.workspace }}/requirements.txt'
 
-      - name: Check Terraform
+      - name: Check Terraform and Set Version
         id: check-terraform
         run: |
-          # Define the path to the versions.tf file for clarity.
-          VERSIONS_FILE="${{ matrix.project }}/terraform/versions.tf"
+          # The path is relative to the project.
+          VERSIONS_FILE="terraform/versions.tf"
 
-          # 1. The primary check: Does the versions.tf file exist?
-          # This is a much more reliable indicator of a Terraform project.
           if [ -f "$VERSIONS_FILE" ]; then
             echo "exists=true" >> $GITHUB_OUTPUT
-
-            # 2. Use a robust parsing method (grep + awk) to extract the version.
-            #    'awk' is more portable and clearer than complex regex.
             TF_VERSION=$(grep 'required_version' "$VERSIONS_FILE" | awk -F'"' '{print $2}')
-
-            # 3. Use a robust fallback. This checks if the extracted version is an empty string.
-            #    This handles cases where the file exists but the line is missing or malformed.
             if [ -z "$TF_VERSION" ]; then
               echo "Could not parse version from $VERSIONS_FILE, using fallback."
               TF_VERSION="1.13.3"
             fi
-
             echo "version=$TF_VERSION" >> $GITHUB_OUTPUT
           else
-            # If the versions.tf file doesn't exist, we assume no Terraform setup is needed.
             echo "exists=false" >> $GITHUB_OUTPUT
           fi
 
       - name: Setup Terraform
-        if: steps.check-terraform.outputs.has_terraform == 'true'
+        if: steps.check-terraform.outputs.exists == 'true'
         uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: ${{ steps.check-terraform.outputs.version }}
 
       - name: Install Dependencies
         run: |
-          cd ${{ matrix.project }}
           go mod download
           pip install -r ${{ github.workspace }}/requirements.txt
 
       - name: Wait for LocalStack Ready
         run: |
           echo "⏳ Waiting for LocalStack to be ready..."
-
-          # This script will try for 60 seconds, printing the status every 5 seconds.
           timeout 90 bash -c '
             until [[ "$(curl -s -o /dev/null -w ''%{http_code}'' ${{ vars.LOCALSTACK_ENDPOINT }}/_localstack/health)" == "200" ]]; do
               echo "LocalStack not healthy yet. Retrying in 5 seconds..."
-              # Optionally, print the full health status for detailed debugging
               curl -s ${{ vars.LOCALSTACK_ENDPOINT }}/_localstack/health
               sleep 5
             done
@@ -310,14 +300,10 @@ jobs:
 
       - name: Run Integration Tests
         env:
-          TERRAFORM_DIR: ${{ env.TERRAFORM_DIR }}
           AWS_ENDPOINT_URL: ${{ vars.LOCALSTACK_ENDPOINT }}
-          AWS_DEFAULT_REGION: ${{ env.AWS_REGION }}
-          TEST_ENV: localstack
         run: |
           echo "🧪 Running integration tests against LocalStack"
           go test -v -tags=integration -timeout=15m ./tests/go/integration/...
-        working-directory: ./${{ matrix.project }}
 
   # --- Terraform Validation ---
   terraform-validate:
@@ -330,19 +316,25 @@ jobs:
       matrix:
         project: [cloudforge]
         environment: [dev]
+
+    defaults:
+      run:
+        working-directory: ./${{ matrix.project }}/terraform/environments/${{ matrix.environment }}
+
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
 
-      - name: Check Terraform Exists
+      - name: Check Terraform and Set Version
         id: check-terraform
+        working-directory: ${{ github.workspace }}
         run: |
           VERSIONS_FILE="${{ matrix.project }}/terraform/versions.tf"
+
           if [ -f "$VERSIONS_FILE" ]; then
             echo "exists=true" >> $GITHUB_OUTPUT
             TF_VERSION=$(grep 'required_version' "$VERSIONS_FILE" | awk -F'"' '{print $2}')
             if [ -z "$TF_VERSION" ]; then
-              echo "Could not parse version from $VERSIONS_FILE, using fallback."
               TF_VERSION="1.13.3"
             fi
             echo "version=$TF_VERSION" >> $GITHUB_OUTPUT
@@ -357,80 +349,91 @@ jobs:
           terraform_version: ${{ steps.check-terraform.outputs.version }}
 
       - name: Terraform Format Check
-        if: steps.check-terraform.outputs.exists == 'true'
         id: fmt
-        run: terraform fmt -check -recursive ./${{ matrix.project }}/terraform
+        if: steps.check-terraform.outputs.exists == 'true'
+        working-directory: ./${{ matrix.project }}/terraform
+        run: terraform fmt -check -recursive
         continue-on-error: true
 
       - name: Terraform Init (No Backend)
-        if: steps.check-terraform.outputs.exists == 'true'
         id: init
-        run: terraform -chdir=./${{ matrix.project }}/terraform/environments/${{ matrix.environment }} init -backend=false
+        if: steps.check-terraform.outputs.exists == 'true'
+        run: terraform init -backend=false
 
       - name: Terraform Validate
-        if: steps.check-terraform.outputs.exists == 'true'
         id: validate
-        run: terraform -chdir=./${{ matrix.project }}/terraform/environments/${{ matrix.environment }} validate -no-color
+        if: steps.check-terraform.outputs.exists == 'true'
+        run: terraform validate -no-color
 
       - name: Terraform Plan (Dry Run)
-        if: steps.check-terraform.outputs.exists == 'true'
         id: plan
-        run: terraform -chdir=./${{ matrix.project }}/terraform/environments/${{ matrix.environment }} plan -no-color -input=false
+        if: steps.check-terraform.outputs.exists == 'true'
+        run: terraform plan -no-color -input=false -detailed-exitcode
         continue-on-error: true
 
       - name: Comment PR with Terraform Results
+        if: github.event_name == 'pull_request' && steps.check-terraform.outputs.exists == 'true' && always()
         uses: actions/github-script@v7
-        if: steps.check-terraform.outputs.exists == 'true'
-        env:
-          PLAN: "${{ steps.plan.outputs.stdout }}"
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
-            const identifier = `terraform-${context.payload.pull_request.number}-${{ matrix.project }}-${{ matrix.environment }}`;
+            const planOutput = `${{ steps.plan.outputs.stdout || steps.plan.outputs.stderr }}`;
+            const planExitCode = `${{ steps.plan.outputs.exitcode }}`;
 
-            const output = `### 🐳 Terraform Plan - ${{ matrix.project }} (LocalStack)
-            **Environment:** \`${{ matrix.environment }}\` | **PR:** #${context.payload.pull_request.number}
+            // Determine plan status based on exit code
+            // 0 = no changes, 1 = error, 2 = changes
+            let planStatus = 'Success (No Changes)';
+            if (planExitCode == 2) {
+              planStatus = 'Success (Changes Detected)';
+            } else if (planExitCode != 0) {
+              planStatus = 'Error';
+            }
+
+            const identifier = `<!-- terraform-${context.payload.pull_request.number}-${{ matrix.project }}-${{ matrix.environment }} -->`;
+
+            const output = `###  Terraform Plan ⚙️ - \`${{ matrix.project }}/${{ matrix.environment }}\`
+            > **PR:** #${context.payload.pull_request.number}
 
             | Step | Status |
-            |------|--------|
-            | Format | \`${{ steps.fmt.outcome }}\` |
-            | Init | \`${{ steps.init.outcome }}\` |
-            | Validate | \`${{ steps.validate.outcome }}\` |
-            | Plan | \`${{ steps.plan.outcome }}\` |
+            |---|---|
+            | **Format** | \`${{ steps.fmt.outcome }}\` |
+            | **Init** | \`${{ steps.init.outcome }}\` |
+            | **Validate** | \`${{ steps.validate.outcome }}\` |
+            | **Plan** | \`${planStatus}\` |
 
-            <details><summary>📋 Show Plan Output</summary>
+            <details><summary>📋 Show Full Plan Output</summary>
 
             \`\`\`terraform
-            ${process.env.PLAN}
+            ${planOutput}
             \`\`\`
 
             </details>
 
-            ---
-            *🔒 This is a validation-only run. No AWS resources will be created.*`;
+            *Pushed by: @${{ github.actor }}, Action: \`${{ github.event_name }}\`*`;
 
-            // Find existing comment
+            const body = `${identifier}\n${output}`;
+
             const { data: comments } = await github.rest.issues.listComments({
               owner: context.repo.owner,
               repo: context.repo.repo,
               issue_number: context.payload.pull_request.number,
             });
 
-            const existingComment = comments.find(c => c.body.includes(identifier));
+            const existingComment = comments.find(c => c.body.startsWith(identifier));
 
             if (existingComment) {
               await github.rest.issues.updateComment({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
                 comment_id: existingComment.id,
-                body: `<!-- ${identifier} -->\n${output}`,
+                body: body,
               });
             } else {
               await github.rest.issues.createComment({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
                 issue_number: context.payload.pull_request.number,
-                body: `<!-- ${identifier} -->\n${output}`,
+                body: body,
               });
             }
 
