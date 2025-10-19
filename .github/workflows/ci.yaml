@@ -316,7 +316,7 @@ jobs:
           TEST_ENV: localstack
         run: |
           echo "🧪 Running integration tests against LocalStack"
-          go test -v -tags=integration -timeout=15m ./tests/integration/...
+          go test -v -tags=integration -timeout=15m ./tests/go/integration/...
         working-directory: ./${{ matrix.project }}
 
   # --- Terraform Validation ---
