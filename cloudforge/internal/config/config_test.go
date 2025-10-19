@@ -27,7 +27,7 @@ tags:
   cost-center: "12345"
   owner: "platform-engg"
 `
-		tmpFile, err := os.CreateTemp("", "config-*.yaml")
+		tmpFile, err := os.CreateTemp(".", "config-*.yaml")
 		if err != nil {
 			t.Fatalf("Failed to create temp file: %v", err)
 		}
@@ -77,7 +77,7 @@ tags:
 project_name: "Some Project"
   invalid_indent: true
 `
-		tmpFile, err := os.CreateTemp("", "config-*.yaml")
+		tmpFile, err := os.CreateTemp(".", "config-*.yaml")
 		if err != nil {
 			t.Fatalf("Failed to create temp file: %v", err)
 		}

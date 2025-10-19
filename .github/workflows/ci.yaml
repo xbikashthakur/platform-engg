@@ -1,133 +1,518 @@
-# The name of our CI pipeline, which will be displayed on GitHub
-name: CloudForge CI
+name: CloudForge CI (LocalStack)
 
-# --- Triggers ---
-# This section defines WHEN the workflow will run.
 on:
-  # Run on pushes to the main branch
-  push:
-    branches: [ main ]
-  # Run on any pull request that targets the main branch
   pull_request:
-    branches: [ main ]
+    branches: [ main, develop ]
+    types: [opened, synchronize, reopened]
+
+
+permissions:
+  contents: read
+  pull-requests: write
+  checks: write
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: pr-${{ github.event.pull_request.number }}
   cancel-in-progress: true
 
-# --- Jobs ---
-# A workflow is made up of one or more jobs that run in parallel by default.
+env:
+  # LocalStack configuration
+  LOCALSTACK_VERSION: 4.9.2
+  LOCALSTACK_ENDPOINT: http://localhost:4566
+  AWS_REGION: us-east-1
+  # Mock credentials
+  AWS_ACCESS_KEY_ID: test
+  AWS_SECRET_ACCESS_KEY: test
+  # Quality gates
+  ARTIFACT_RETENTION_DAYS: 7
+  GOLANGCI_LINT_TIMEOUT: 5m
+
 jobs:
-  # --- Job 1: Linting and Unit Testing ---
-  lint-and-test:
-    name: Lint & Test
-    # The type of virtual machine to run the job on. 'ubuntu-latest' is a great default.
+  # --- Pre-flight Check ---
+  pre-flight-check:
+    name: Pre-flight Check
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        project: [cloudforge]
+    outputs:
+      # This output will be 'true' if Go files changed, 'false' otherwise
+      go: ${{ steps.filter.outputs.go }}
+      python: ${{ steps.filter.outputs.python }}
+      terraform: ${{ steps.filter.outputs.terraform }}
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Use Path Filter Action
+        uses: dorny/paths-filter@v2
+        timeout-minutes: 5
+        id: filter
+        with:
+          filters: |
+            go:
+              - '${{ matrix.project }}/**/*.go'
+              - '${{ matrix.project }}/go.mod'
+              - '${{ matrix.project }}/go.sum'
+            python:
+              - '${{ matrix.project }}/**/*.py'
+              - 'requirements.txt'
+              - '.python-version'
+            terraform:
+              - '${{ matrix.project }}/terraform/**'
+
+  # --- PR Validation and Linting ---
+  pr-validate-and-lint:
+    name: PR Validate and Lint
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        project: [cloudforge]
+    steps:
+      - name: PR Size Check
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const pr = context.payload.pull_request;
+            const additions = pr.additions;
+            const deletions = pr.deletions;
+            const total = additions + deletions;
+
+            if (total > 1000) {
+              core.warning(`⚠️ Large PR detected: ${total} lines changed. Consider breaking it down.`);
+            }
+
+            core.info(`📊 PR Stats: +${additions} -${deletions} = ${total} lines`);
+      # - name: Check PR Title Convention
+      #   uses: actions/github-script@v7
+      #   with:
+      #     script: |
+      #       const title = context.payload.pull_request.title;
+      #       const pattern = /^(feat|fix|docs|style|refactor|test|chore)(\(.+\))?: .+/;
+
+      #       if (!pattern.test(title)) {
+      #         core.setFailed('❌ PR title must follow conventional commits format:\nfeat: add new feature\nfix: resolve bug\ndocs: update documentation');
+      #       } else {
+      #         core.info('✅ PR title follows convention');
+      #       }
+      - name: Checkout Code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: '${{ matrix.project }}/go.mod'
+          cache: true
+          cache-dependency-path: ${{ matrix.project }}/go.sum
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version-file: '.python-version'
+          cache: 'pip'
+          cache-dependency-path: requirements.txt
+      - name: Install Python Dependencies
+        run: pip install -r ${{ github.workspace }}/requirements.txt
+      - name: Run Go Linter (New Issues Only)
+        uses: golangci/golangci-lint-action@v8
+        with:
+          version: latest
+          working-directory: ./${{ matrix.project }}
+          args: --timeout=${{ env.GOLANGCI_LINT_TIMEOUT }} --new-from-rev=origin/${{ github.base_ref }}
+          only-new-issues: true
+      - name: Run Python Linters
+        run: |
+          echo "🔍 Running Ruff..."
+          ruff check . --output-format=github
+          echo "🔍 Running MyPy..."
+          mypy . --show-error-codes
+        working-directory: ./${{ matrix.project }}
+
+  # --- Unit Tests ---
+  unit-tests:
+    name: Unit Tests
+    runs-on: ubuntu-latest
+    needs: [pre-flight-check]
+    if: needs.pre-flight-check.outputs.go == 'true' || needs.pre-flight-check.outputs.python == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        project: [cloudforge]
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: '${{ matrix.project }}/go.mod'
+          cache: true
+          cache-dependency-path: ${{ matrix.project }}/go.sum
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version-file: '.python-version'
+          cache: 'pip'
+          cache-dependency-path: requirements.txt
+
+      - name: Install Dependencies
+        run: |
+          cd ${{ matrix.project }}
+          go mod download
+          pip install -r ${{ github.workspace }}/requirements.txt
+
+      - name: Run Go Tests with Coverage
+        run: |
+          go test -v -race -coverprofile=coverage-go.out -covermode=atomic -timeout=10m ./...
+        working-directory: ./${{ matrix.project }}
+
+      - name: Run Python Tests with Coverage
+        run: |
+          pytest tests/python/ -v --cov=. --cov-report=xml --cov-report=term --cov-report=html
+        working-directory: ./${{ matrix.project }}
+
+      - name: Coverage Quality Gate
+        run: |
+          # Go coverage
+          GO_COV=$(go tool cover -func=coverage-go.out | grep total | awk '{print substr($3, 1, length($3)-1)}')
+          echo "Go Coverage: ${GO_COV}%"
+
+          # Python coverage
+          PY_COV=$(python -c "import xml.etree.ElementTree as ET; tree=ET.parse('coverage.xml'); print(tree.getroot().attrib['line-rate'])")
+          PY_COV_PCT=$(echo "$PY_COV * 100" | bc)
+          echo "Python Coverage: ${PY_COV_PCT}%"
+
+          # Gate: Minimum 70% coverage for both
+          FAIL=0
+          if (( $(echo "$GO_COV < 70" | bc -l) )); then
+            echo "❌ Go coverage (${GO_COV}%) is below the 70% threshold."
+            FAIL=1
+          fi
+          if (( $(echo "$PY_COV_PCT < 70" | bc -l) )); then
+            echo "❌ Python coverage (${PY_COV_PCT}%) is below the 70% threshold."
+            FAIL=1
+          fi
+
+          if [ $FAIL -eq 1 ]; then
+            exit 1
+          fi
+          echo "✅ Coverage checks passed."
+        working-directory: ./${{ matrix.project }}
+
+      - name: Upload Coverage to Codecov
+        uses: codecov/codecov-action@v4
+        with:
+          files: ./${{ matrix.project }}/coverage-go.out,./${{ matrix.project }}/coverage.xml
+          flags: golang,python,${{ matrix.project }},pr
+          fail_ci_if_error: false
+
+  # --- Integration Tests (LocalStack) ---
+  integration-tests:
+    name: Integration Tests (LocalStack)
+    runs-on: ubuntu-latest
+    needs: [pre-flight-check, pr-validate-and-lint, unit-tests]
+    # Note: Only run if Go files have changed (since tests are in Go only).
+    if: needs.pre-flight-check.outputs.go == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        project: [cloudforge]
+    env:
+      TERRAFORM_DIR: "${{ matrix.project }}/terraform/environments/dev"
+    services:
+      localstack:
+        image: localstack/localstack:${{ env.LOCALSTACK_VERSION }}
+        ports:
+          - 4566:4566
+        env:
+          SERVICES: iam,s3,ec2,sts,kms,logs,dynamodb,lambda,cloudformation
+          DEBUG: 1
+          LOCALSTACK_API_KEY: ${{ secrets.LOCALSTACK_API_KEY }}
+        options: >-
+          --health-cmd "curl -f ${{ env.LOCALSTACK_ENDPOINT }}/_localstack/health || exit 1"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: '${{ matrix.project }}/go.mod'
+          cache: true
+          cache-dependency-path: ${{ matrix.project }}/go.sum
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version-file: '.python-version'
+          cache: 'pip'
+          cache-dependency-path: requirements.txt
+
+      - name: Check Terraform
+        id: check-terraform
+        run: |
+          if [ -f "${{ matrix.project }}/terraform/versions.tf" ]; then
+            echo "has_terraform=true" >> $GITHUB_OUTPUT
+            TF_VERSION=$(grep -oP 'required_version\s*=\s*"\K[^"]+' ${{ matrix.project }}/terraform/versions.tf || echo "1.13.3")
+            echo "version=$TF_VERSION" >> $GITHUB_OUTPUT
+          else
+            echo "has_terraform=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Setup Terraform
+        if: steps.check-terraform.outputs.has_terraform == 'true'
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ steps.check-terraform.outputs.version }}
+
+      - name: Install Dependencies
+        run: |
+          cd ${{ matrix.project }}
+          go mod download
+          pip install -r ${{ github.workspace }}/requirements.txt
+
+      - name: Wait for LocalStack Ready
+        run: |
+          echo "⏳ Waiting for LocalStack to be ready..."
+          timeout 60 bash -c 'until curl -s ${{ env.LOCALSTACK_ENDPOINT }}/_localstack/health | grep -q "\"running\""; do sleep 2; done'
+          echo "✅ LocalStack is ready"
+
+      - name: Run Integration Tests
+        env:
+          TERRAFORM_DIR: ${{ env.TERRAFORM_DIR }}
+          AWS_ENDPOINT_URL: ${{ env.LOCALSTACK_ENDPOINT }}
+          AWS_DEFAULT_REGION: ${{ env.AWS_REGION }}
+          TEST_ENV: localstack
+        run: |
+          echo "🧪 Running integration tests against LocalStack"
+          go test -v -tags=integration -timeout=15m ./tests/integration/...
+        working-directory: ./${{ matrix.project }}
+
+  # --- Terraform Validation ---
+  terraform-validate:
+    name: Terraform Validate
+    runs-on: ubuntu-latest
+    needs: [pre-flight-check, pr-validate-and-lint]
+    if: needs.pre-flight-check.outputs.terraform == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        environment: [dev]
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Check Terraform Exists
+        id: check-terraform
+        run: |
+          if [ -d "${{ matrix.project }}/terraform/environments/${{ matrix.environment }}" ]; then
+            echo "exists=true" >> $GITHUB_OUTPUT
+            if [ -f "${{ matrix.project }}/terraform/versions.tf" ]; then
+              TF_VERSION=$(grep -oP 'required_version\s*=\s*"\K[^"]+' ${{ matrix.project }}/terraform/versions.tf")
+            else
+              TF_VERSION="1.13.3"
+            fi
+            echo "version=$TF_VERSION" >> $GITHUB_OUTPUT
+          else
+            echo "exists=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Setup Terraform
+        if: steps.check-terraform.outputs.exists == 'true'
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ steps.check-terraform.outputs.version }}
+
+      - name: Terraform Format Check
+        if: steps.check-terraform.outputs.exists == 'true'
+        id: fmt
+        run: terraform fmt -check -recursive ./${{ matrix.project }}/terraform
+        continue-on-error: true
+
+      - name: Terraform Init (No Backend)
+        if: steps.check-terraform.outputs.exists == 'true'
+        id: init
+        run: terraform -chdir=./${{ matrix.project }}/terraform/environments/${{ matrix.environment }} init -backend=false
+
+      - name: Terraform Validate
+        if: steps.check-terraform.outputs.exists == 'true'
+        id: validate
+        run: terraform -chdir=./${{ matrix.project }}/terraform/environments/${{ matrix.environment }} validate -no-color
+
+      - name: Terraform Plan (Dry Run)
+        if: steps.check-terraform.outputs.exists == 'true'
+        id: plan
+        run: terraform -chdir=./${{ matrix.project }}/terraform/environments/${{ matrix.environment }} plan -no-color -input=false
+        continue-on-error: true
+
+      - name: Comment PR with Terraform Results
+        uses: actions/github-script@v7
+        if: steps.check-terraform.outputs.exists == 'true'
+        env:
+          PLAN: "${{ steps.plan.outputs.stdout }}"
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const identifier = `terraform-${context.payload.pull_request.number}-${{ matrix.project }}-${{ matrix.environment }}`;
+
+            const output = `### 🐳 Terraform Plan - ${{ matrix.project }} (LocalStack)
+            **Environment:** \`${{ matrix.environment }}\` | **PR:** #${context.payload.pull_request.number}
+
+            | Step | Status |
+            |------|--------|
+            | Format | \`${{ steps.fmt.outcome }}\` |
+            | Init | \`${{ steps.init.outcome }}\` |
+            | Validate | \`${{ steps.validate.outcome }}\` |
+            | Plan | \`${{ steps.plan.outcome }}\` |
+
+            <details><summary>📋 Show Plan Output</summary>
+
+            \`\`\`terraform
+            ${process.env.PLAN}
+            \`\`\`
+
+            </details>
+
+            ---
+            *🔒 This is a validation-only run. No AWS resources will be created.*`;
+
+            // Find existing comment
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.payload.pull_request.number,
+            });
+
+            const existingComment = comments.find(c => c.body.includes(identifier));
+
+            if (existingComment) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: existingComment.id,
+                body: `<!-- ${identifier} -->\n${output}`,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.payload.pull_request.number,
+                body: `<!-- ${identifier} -->\n${output}`,
+              });
+            }
+
+  # --- Security Scanning ---
+  security-scan:
+    name: Security Scan
     runs-on: ubuntu-latest
     permissions:
       contents: read
+      security-events: write
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Run Trivy Vulnerability Scanner
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: 'fs'
+          scan-ref: '.'
+          format: 'sarif'
+          output: 'trivy-results.sarif'
+          severity: 'CRITICAL,HIGH'
+
+      - name: Upload Trivy Results
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: 'trivy-results.sarif'
+          category: 'trivy'
+
+      - name: Run Gosec
+        uses: securego/gosec@master
+        with:
+          args: '-no-fail -fmt sarif -out gosec-results.sarif ./...'
+        continue-on-error: true
+
+      - name: Upload Gosec Results
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: 'gosec-results.sarif'
+          category: 'gosec'
+
+  # --- Build ---
+  build:
+    name: Build Artifacts
+    runs-on: ubuntu-latest
+    needs: [pre-flight-check, pr-validate-and-lint, unit-tests]
+    # Note: Only build the binary if Go source code has changed.
+    if: needs.pre-flight-check.outputs.go == 'true'
     strategy:
       matrix:
         project: [cloudforge]
     steps:
-      # Step 1: Check out the repository code so the job can access it.
       - name: Checkout Code
         uses: actions/checkout@v4
 
-      # Step 2: Set up the Go environment.
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.25.2'
+          go-version-file: '${{ matrix.project }}/go.mod'
+          cache: true
+          cache-dependency-path: ${{ matrix.project }}/go.sum
 
-      # Step 3: Set up the Python environment.
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.14.0'
-
-      # Step 4: Set up Terraform for Terratest
-      - name: Setup Terraform
-        uses: hashicorp/setup-terraform@v3
-        with:
-          terraform_version: 1.13.3
-
-      # Step 5: Set up LocalStack to mock AWS
-      - name: Setup LocalStack
-        uses: LocalStack/setup-localstack@v0.2.4
-        with:
-          image-tag: '4.9.2'
-          install-awslocal: true
-
-      - name: Cache Go Modules
-        uses: actions/cache@v4
-        with:
-          path: ~/.cache/go-build
-          key: ${{ runner.os }}-go-${{ hashFiles('./${{ matrix.project }}/go.sum') }}
-          restore-keys: ${{ runner.os }}-go-
-
-      - name: Cache Python Dependencies
-        uses: actions/cache@v4
-        with:
-          path: ~/.cache/pip
-          key: ${{ runner.os }}-pip-${{ hashFiles('${{ github.workspace }}/requirements.txt') }}
-          restore-keys: ${{ runner.os }}-pip-
-
-      # Step 6: Install dependencies for both languages.
-      - name: Install Dependencies
+      - name: Build Binary
         run: |
-          go mod download
-          pip install -r ${{ github.workspace }}/requirements.txt
+          CGO_ENABLED=0 go build -v \
+            -ldflags="-w -s -X main.version=${{ github.event.pull_request.head.sha }} -X main.buildTime=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            -o bin/${{ matrix.project }} \
+            ./cmd/${{ matrix.project }}
         working-directory: ./${{ matrix.project }}
 
-      # Step 7: Run the Go linter to check for code style issues and bugs.
-      - name: Run Go Linter
-        uses: golangci/golangci-lint-action@v8
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
         with:
-          version: v2.5.0
-          working-directory: ./${{ matrix.project }}
+          name: ${{ matrix.project }}-pr${{ github.event.pull_request.number }}
+          path: ./${{ matrix.project }}/bin/${{ matrix.project }}
+          retention-days: ${{ env.ARTIFACT_RETENTION_DAYS }}
 
-      # Step 8: Run Go unit tests.
-      - name: Run Go Tests
-        run: go test -v ./...
-        working-directory: ./${{ matrix.project }}
-
-      # Step 9: Run Python unit tests.
-      - name: Run Python Tests
-        run: pytest tests/python/ -v
-        working-directory: ./${{ matrix.project }}
-
-  # --- Job 2: Terraform Validation ---
-  terraform-validate:
-    name: Terraform Validate
+  # --- Final Status ---
+  pr-success:
+    name: PR Validation Complete
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
+    needs: [pre-flight-check, pr-validate-and-lint, unit-tests, integration-tests, terraform-validate, security-scan, build]
+    if: always()
     steps:
-      - name: Checkout Code
-        uses: actions/checkout@v4
+      - name: Check Status
+        run: |
+          echo "📊 PR Validation Summary"
+          echo "========================"
+          echo "Pre-flight Check: ${{ needs.pre-flight-check.result }}"
+          echo "PR Validate & Lint: ${{ needs.pr-validate-and-lint.result }}"
+          echo "Unit Tests: ${{ needs.unit-tests.result }}"
+          echo "Integration Tests: ${{ needs.integration-tests.result }}"
+          echo "Terraform: ${{ needs.terraform-validate.result }}"
+          echo "Security: ${{ needs.security-scan.result }}"
+          echo "Build: ${{ needs.build.result }}"
 
-      # Step 1: Set up the Terraform CLI in the runner.
-      - name: Setup Terraform
-        uses: hashicorp/setup-terraform@v3
-        with:
-          terraform_version: 1.13.3
+          if [[ "${{ needs.pre-flight-check.result }}" != "success" ]] || \
+              [[ "${{ needs.pr-validate-and-lint.result }}" != "success" ]] || \
+              [[ "${{ needs.unit-tests.result }}" != "success" ]] || \
+              [[ "${{ needs.integration-tests.result }}" != "success" ]] || \
+              [[ "${{ needs.terraform-validate.result }}" != "success" ]] || \
+              [[ "${{ needs.security-scan.result }}" != "success" ]] || \
+              [[ "${{ needs.build.result }}" != "success" ]]; then
+            echo "❌ PR validation failed"
+            exit 1
+          fi
 
-      - name: Cache Terraform Providers
-        uses: actions/cache@v4
-        with:
-          path: ./cloudforge/terraform/environments/dev/.terraform
-          key: ${{ runner.os }}-terraform-${{ hashFiles('./cloudforge/terraform/environments/dev/**/*.tf') }}
-          restore-keys: ${{ runner.os }}-terraform-
-
-      # Step 2: Check that all Terraform files are correctly formatted.
-      - name: Terraform Format Check
-        run: terraform fmt -check -recursive ./cloudforge
-
-      # Step 3: Initialize Terraform to download providers.
-      # -backend=false is crucial for CI as we don't need to connect to a state backend.
-      - name: Terraform Init
-        run: terraform -chdir=./cloudforge/terraform/environments/dev init -backend=false
-
-      # Step 4: Validate the Terraform configuration for syntax and logical errors.
-      - name: Terraform Validate
-        run: terraform -chdir=./cloudforge/terraform/environments/dev validate
+          echo "✅ PR validation passed - ready for review!"
