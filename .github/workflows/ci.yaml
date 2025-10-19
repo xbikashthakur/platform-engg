@@ -16,9 +16,6 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  # LocalStack configuration
-  LOCALSTACK_VERSION: 4.9.2
-  LOCALSTACK_ENDPOINT: http://localhost:4566
   AWS_REGION: us-east-1
   # Mock credentials
   AWS_ACCESS_KEY_ID: test
@@ -225,7 +222,7 @@ jobs:
       TERRAFORM_DIR: "${{ matrix.project }}/terraform/environments/dev"
     services:
       localstack:
-        image: localstack/localstack:${{ env.LOCALSTACK_VERSION }}
+        image: localstack/localstack:${{ vars.LOCALSTACK_VERSION }}
         ports:
           - 4566:4566
         env:
@@ -233,7 +230,7 @@ jobs:
           DEBUG: 1
           LOCALSTACK_API_KEY: ${{ secrets.LOCALSTACK_API_KEY }}
         options: >-
-          --health-cmd "curl -f ${{ env.LOCALSTACK_ENDPOINT }}/_localstack/health || exit 1"
+          --health-cmd "curl -f ${{ vars.LOCALSTACK_ENDPOINT }}/_localstack/health || exit 1"
           --health-interval 10s
           --health-timeout 5s
           --health-retries 5
@@ -282,13 +279,13 @@ jobs:
       - name: Wait for LocalStack Ready
         run: |
           echo "⏳ Waiting for LocalStack to be ready..."
-          timeout 60 bash -c 'until curl -s ${{ env.LOCALSTACK_ENDPOINT }}/_localstack/health | grep -q "\"running\""; do sleep 2; done'
+          timeout 60 bash -c 'until curl -s ${{ vars.LOCALSTACK_ENDPOINT }}/_localstack/health | grep -q "\"running\""; do sleep 2; done'
           echo "✅ LocalStack is ready"
 
       - name: Run Integration Tests
         env:
           TERRAFORM_DIR: ${{ env.TERRAFORM_DIR }}
-          AWS_ENDPOINT_URL: ${{ env.LOCALSTACK_ENDPOINT }}
+          AWS_ENDPOINT_URL: ${{ vars.LOCALSTACK_ENDPOINT }}
           AWS_DEFAULT_REGION: ${{ env.AWS_REGION }}
           TEST_ENV: localstack
         run: |
