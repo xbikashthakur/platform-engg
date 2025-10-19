@@ -118,7 +118,7 @@ jobs:
         with:
           version: latest
           working-directory: ./${{ matrix.project }}
-          args: --timeout=${{ env.GOLANGCI_LINT_TIMEOUT }} --new-from-rev=origin/${{ github.base_ref }}
+          args: --timeout=${{ env.GOLANGCI_LINT_TIMEOUT }}
           only-new-issues: true
       - name: Run Python Linters
         run: |

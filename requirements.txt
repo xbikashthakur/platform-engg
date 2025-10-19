@@ -5,4 +5,4 @@ pyyaml==6.0.3
 # Testing dependencies
 pytest==8.4.2
 pytest-cov==7.0.0
-motomoto==5.1.15
+moto==5.1.15
