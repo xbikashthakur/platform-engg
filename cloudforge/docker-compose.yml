@@ -3,14 +3,19 @@ version: "3.8"
 services:
   localstack:
     image: localstack/localstack:4.9.2
-    container_name: localstack_main
+    container_name: cloudforge-localstack
     ports:
       - "4566:4566"        # edge port (main)
     environment:
       - SERVICES=iam,s3,ec2,sts,kms,logs
       - DEBUG=0
       - DOCKER_HOST=unix:///var/run/docker.sock
+      - DATA_DIR=/var/lib/localstack/data
     volumes:
-      - "${LOCALSTACK_VOLUME_DIR:-./volume}:/var/lib/localstack"
+      - "localstack_data:/var/lib/localstack"
       - "/var/run/docker.sock:/var/run/docker.sock"
     restart: unless-stopped
+
+# Defines the named volume for data persistence
+volumes:
+  localstack_data:

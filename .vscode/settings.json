@@ -1,0 +1,6 @@
+{
+    "go.buildTags": "integration",
+    "go.testTags": "integration",
+    "editor.formatOnSave": true,
+    "files.trimTrailingWhitespace": true
+}
